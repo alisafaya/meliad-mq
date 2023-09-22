@@ -46,6 +46,7 @@ class MemoryManager:
                value_size: int,
                database_size: Optional[int] = None,
                dtype: Dtype = "float32",
+               is_multiquery: bool = False,
                off_device_memory: Optional[MemoryResource] = None):
     """Create a MemoryManager object.
 
@@ -70,15 +71,19 @@ class MemoryManager:
     self.value_size = value_size
     self.database_size = database_size
     self.dtype = dtype
+    self.is_multiquery = is_multiquery
     self.off_device_memory = off_device_memory
 
   def create_memory_layer(self) -> linen.Module:
     """Create a flax Module that implements external memory."""
 
-    num_datasets = (
-        self.batch_size * self.num_heads  #
-        if self.off_device_memory is None  #
-        else self.num_heads)
+    if self.is_multiquery:
+      split_dimensions = (0,)
+      num_datasets = self.batch_size
+    else:
+      split_dimensions = (0, -2)
+      num_datasets = self.num_heads * self.batch_size
+
     if self.off_device_memory is not None:
       mem_layer = None
       if mem_layer is None:
@@ -96,7 +101,7 @@ class MemoryManager:
                                            dtype=self.dtype)
     # Handle queries of shape [batch_size, seq_len, num_heads, kv_features]
     return memory_layer.BatchedMemory(mem_layer,
-                                      split_dimensions=(0, -2))
+                                      split_dimensions=split_dimensions)
 
 
 @gin.configurable
@@ -106,6 +111,7 @@ def memory_on_tpu_factory(batch_size: int,
                           key_size: int = gin.REQUIRED,
                           value_size: int = gin.REQUIRED,
                           database_size: int = gin.REQUIRED,
+                          is_multiquery: bool = gin.REQUIRED,
                           dtype: Dtype = gin.REQUIRED) -> MemoryManager:
   """Implement SCAM memory on device."""
   return MemoryManager(batch_size=batch_size,
@@ -115,6 +121,7 @@ def memory_on_tpu_factory(batch_size: int,
                        value_size=value_size,
                        database_size=database_size,
                        dtype=dtype,
+                       is_multiquery=is_multiquery,
                        off_device_memory=None)
 
 

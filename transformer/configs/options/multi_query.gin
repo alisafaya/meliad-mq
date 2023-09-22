@@ -1,0 +1,6 @@
+
+memory_factory.memory_on_tpu_factory:
+  is_multiquery = True
+
+transformer_base.TransformerBase:
+  attention_style = "multi_query"

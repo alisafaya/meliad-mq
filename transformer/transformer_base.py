@@ -45,6 +45,7 @@ class KVQLayer(nn.Module):
   head_size: int
   has_queries: bool = True
   has_queries2: bool = False  # For cross-attention, e.g. decoder or recurrence.
+  attention_style: str = "multi_head" # "multi_head" or "multi_query"
 
   normalize_keys: bool = True  # Normalize keys and queries.
   num_position_embeddings: int = 0  # Learned absolute position embeddings.
@@ -56,16 +57,20 @@ class KVQLayer(nn.Module):
     kernel_init = nn.initializers.variance_scaling(
         scale=1.0, mode="fan_in", distribution="truncated_normal")
 
+    self.kv_features = self.head_size  
+    if self.attention_style == "multi_head":
+      self.kv_features *= self.num_heads 
+
     # Project to keys,values,queries
     # Disable bias.  This prevents a failure mode whereby the attention matrix
     # can become filled with very large uniform values, due to high bias.
     self.keys_layer = nn.Dense(
-        features=self.num_heads * self.head_size,
+        features=self.kv_features,
         use_bias=False,   # No bias for keys.
         kernel_init=kernel_init,
         dtype=self.dtype)
     self.values_layer = nn.Dense(
-        features=self.num_heads * self.head_size,
+        features=self.kv_features,
         use_bias=False,   # No bias for values.
         kernel_init=kernel_init,
         dtype=self.dtype)
@@ -180,13 +185,18 @@ class KVQLayer(nn.Module):
       queries2 = None
 
     # Reshape to split num_heads, head_size into separate dimensions.
-    kv_shape = (batch_size, num_keys, self.num_heads, self.head_size)
-    keys = jnp.reshape(keys, kv_shape)
-    values = jnp.reshape(values, kv_shape)
+    if self.attention_style == "multi_head":
+      kv_shape = (batch_size, num_keys, self.num_heads, self.head_size)
+      keys = jnp.reshape(keys, kv_shape)
+      values = jnp.reshape(values, kv_shape)
+    elif self.attention_style == "multi_query":
+      kv_shape = (batch_size, num_keys, self.head_size)
+    
+    q_shape = (batch_size, num_keys, self.num_heads, self.head_size)
     if queries is not None:
-      queries = jnp.reshape(queries, kv_shape)
+      queries = jnp.reshape(queries, q_shape)
     if queries2 is not None:
-      queries2 = jnp.reshape(queries2, kv_shape)
+      queries2 = jnp.reshape(queries2, q_shape)
 
     if self.normalize_keys:
       # Normalize both keys and queries.
@@ -229,6 +239,7 @@ class TransformerBase(nn.Module):
   embedding_size: int
   num_heads: int
   head_size: int
+  attention_style: str # "multi_head" or "multi_query"
 
   cross_attention_q: bool = False         # Additional q for cross-attention.
   cross_attention_kv: bool = False        # Additional kv for cross-attention.
@@ -265,8 +276,13 @@ class TransformerBase(nn.Module):
     return jnp.asarray(norm_kq, dtype=self.dtype)
 
   def setup(self):
+    assert self.attention_style in ["multi_head", "multi_query"], (
+      "attention_style must be 'multi_head' or 'multi_query'."
+    )     
+
     # Keys,values,queries for self-attention; queries for cross-attention.
     self._kvq = KVQLayer(self.embedding_size, self.num_heads, self.head_size,
+                         attention_style=self.attention_style,
                          has_queries=True,
                          has_queries2=self.cross_attention_q,
                          num_position_embeddings=self.num_position_embeddings,

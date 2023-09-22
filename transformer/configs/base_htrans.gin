@@ -55,6 +55,7 @@ transformer_base.TransformerBase:
   post_attn_dropout = False
   pre_ffn_dropout = False
   post_ffn_dropout = True
+  attention_style = "multi_head" # Can be "multi_head" or "multi_query".
 
 transformer_attn/nn_components.MLP:
   num_layers = 1                      # Just a single dense matmul.

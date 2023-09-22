@@ -200,9 +200,6 @@ class BatchedMemory(linen.Module):
     Returns:
       A dummy value 0, once the operation has completed.
     """
-    if key.ndim != 4 or value.ndim != 4:
-      raise ValueError('Expected batched inputs; got shapes: %s and %s.' %
-                       (key.shape, value.shape))
     key = _rearrange_dimensions(key, self.split_dimensions)
     value = _rearrange_dimensions(value, self.split_dimensions)
     update_stride = self.update_stride

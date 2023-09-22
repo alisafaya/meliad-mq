@@ -66,7 +66,13 @@ def concat_kvqi(kvqi: KVQITuple, prev_kvi: Optional[KVITuple]) -> (
   (keys, values, queries, queries2, importance) = kvqi
   # The current keys,values,importance will be passed to the next window.
   next_kvi = (keys, values, importance)
-  (batch_size, _, num_heads, head_dim) = keys.shape    # (b, _, h, d)
+
+  if keys.ndim == 4:
+    # multi-head attention
+    (batch_size, _, num_heads, head_dim) = keys.shape    # (b, _, h, d)
+  else:
+    # multi-query attention
+    (batch_size, _, head_dim) = keys.shape
 
   if prev_kvi is None:
     return (kvqi, None)   # If prev_kvi is None, next_kvi should be None.
@@ -74,14 +80,19 @@ def concat_kvqi(kvqi: KVQITuple, prev_kvi: Optional[KVITuple]) -> (
   # Unpack prev_kvi and check shapes.
   (pkeys, pvalues, pimportance) = prev_kvi
   num_pkeys = pkeys.shape[1]
-  assert pkeys.shape == (batch_size, num_pkeys, num_heads, head_dim)
+
+  if pkeys.ndim == 4:
+    assert pkeys.shape == (batch_size, num_pkeys, num_heads, head_dim)
+  elif pkeys.ndim == 3:
+    assert pkeys.shape == (batch_size, num_pkeys, head_dim)
+
   assert pkeys.shape == pvalues.shape
   if pimportance is not None:
     assert pimportance.shape == (batch_size, num_pkeys)
 
   # Concatenate keys and values.
-  keys = jnp.concatenate([pkeys, keys], axis=1)        # (b, k, h, d)
-  values = jnp.concatenate([pvalues, values], axis=1)  # (b, k, h, d)
+  keys = jnp.concatenate([pkeys, keys], axis=1)        # mh -> (b, k, h, d) or mq -> (b, k, d)
+  values = jnp.concatenate([pvalues, values], axis=1)  # (b, k, h, d) or (b, k, d)
   if importance is not None:
     assert pimportance is not None
     importance = jnp.concatenate([pimportance, importance], axis=1)  # (b, k)
@@ -123,8 +134,8 @@ def simple_attention(keys: Array,
   """
 
   # (batch_size, num_keys, num_heads, head_dim)
-  (batch_size, num_keys, num_heads, head_dim) = keys.shape  # (b, k, h, d)
-  num_queries = queries.shape[1]
+  (batch_size, num_queries, num_heads, head_dim) = queries.shape  # (b, q, h, d)
+  num_keys = keys.shape[1]
   assert keys.shape == values.shape
   assert queries.shape == (batch_size, num_queries, num_heads, head_dim)
   if importance is not None:
@@ -134,7 +145,12 @@ def simple_attention(keys: Array,
   logging.info("attn: queries = %r", queries)
 
   # Compute attention matrix.
-  attn = jnp.einsum("...qhd,...khd->...hqk", queries, keys)  # (b, h, q, k)
+  if keys.ndim == 3:
+    # multi-query attention
+    attn = jnp.einsum("...qhd,...kd->...hqk", queries, keys)  # (b, h, q, k)
+  else:
+    # multi-head attention
+    attn = jnp.einsum("...qhd,...khd->...hqk", queries, keys)  # (b, h, q, k)
 
   logging.info("attn: content attn = %r", attn)
 
@@ -177,7 +193,12 @@ def simple_attention(keys: Array,
   logging.info("attn: final attn = %r", attn)
 
   # Compute output -- values weighted by attention matrix.
-  y = jnp.einsum("...hqk,...khd->...qhd", attn, values)  # (b, q, h, d)
+  if values.ndim == 3:
+    # multi-query attention
+    y = jnp.einsum("...hqk,...kd->...qhd", attn, values)  # (b, q, h, d)
+  else:
+    # multi-head attention
+    y = jnp.einsum("...hqk,...khd->...qhd", attn, values)  # (b, q, h, d)
 
   logging.info("attn: y = %r", y)
   return y
@@ -208,13 +229,19 @@ def external_attention(external_keys: Array,
     Attention outputs of shape [batch_size, num_queries, num_heads, head_size]
   """
 
-  (batch_size, num_queries, num_heads, _, head_dim) = external_keys.shape
-  assert queries.shape == (batch_size, num_queries, num_heads, head_dim)
   assert external_values.shape == external_keys.shape
+  num_heads = queries.shape[2]
 
   # Build attention matrix.
   logging.info("ext_attn: external keys = %r", external_keys)
-  ext_attn = jnp.einsum("...qhd,...qhid->...hqi", queries, external_keys)
+  logging.info("ext_attn: queries = %r", queries)
+
+  if external_keys.ndim == 4:
+    # multi-query attention
+    ext_attn = jnp.einsum("...qhd,...qid->...hqi", queries, external_keys)
+  elif external_keys.ndim == 5:
+    # multi-head attention
+    ext_attn = jnp.einsum("...qhd,...qhid->...hqi", queries, external_keys)
 
   logging.info("ext_attn: external_mem_attn: %s", ext_attn)
   if scale_factor is not None:
@@ -226,7 +253,13 @@ def external_attention(external_keys: Array,
   ext_attn = nn.softmax(ext_attn, axis=-1)
 
   # Compute weighted sum of values.
-  ext_y = jnp.einsum("...hqi,...qhid->...qhd", ext_attn, external_values)
+  if external_values.ndim == 4:
+    # multi-query attention
+    ext_y = jnp.einsum("...hqi,...qid->...qhd", ext_attn, external_values)
+  elif external_values.ndim == 5:
+    # multi-head attention
+    ext_y = jnp.einsum("...hqi,...qhid->...qhd", ext_attn, external_values)
+
   logging.info("ext_attn: ext_y = %r", ext_y)
   return ext_y
 
@@ -239,8 +272,6 @@ def sliding_attention_window_shape(kvi: KVITuple,
 
   # Do error checking here.
   (keys, values, importance) = kvi
-  assert keys.shape == queries.shape
-  assert values.shape == queries.shape
 
   # Get sizes...
   (batch_size, sequence_length, _, _) = queries.shape

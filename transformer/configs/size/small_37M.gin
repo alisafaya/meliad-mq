@@ -1,6 +1,6 @@
 
 # Number of parameters = 37M.
-NUM_LAYERS = 12
+NUM_LAYERS = 6
 EMBED_DIM = 512
 NUM_HEADS = 8
 HEAD_DIM = 64

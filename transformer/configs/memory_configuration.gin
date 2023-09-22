@@ -12,6 +12,7 @@ memory_factory.memory_on_tpu_factory:
   key_size = %MEMORY_HEAD_DIM
   value_size = %MEMORY_HEAD_DIM
   database_size = 8192
+  is_multiquery = False
   dtype = %DTYPE  # defined in base_htrans.gin
 
 

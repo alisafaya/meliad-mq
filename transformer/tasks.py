@@ -18,8 +18,6 @@ import functools
 
 from transformer import text_dataset
 import seqio
-import t5.data
-from t5.data import preprocessors
 import tensorflow as tf
 
 
@@ -45,8 +43,21 @@ def define_pg19_task(name: str, vocab: seqio.Vocabulary):
   )
 
 
-T5_DEFAULT_VOCABULARY = t5.data.get_default_vocabulary()
+def define_long_pile_task(name: str, vocab: seqio.Vocabulary):
+  seqio.TaskRegistry.add(
+      name,
+      seqio.TfdsDataSource(tfds_name='long_pile:1.1.0'),
+      preprocessors=[
+          functools.partial(text_dataset.rekey_articles,
+                            rekey={'text': 'targets'},
+                            keep={'subset'}), seqio.preprocessors.tokenize,
+          seqio.preprocessors.append_eos
+      ],
+      output_features={
+          'targets': seqio.Feature(vocab, add_eos=True, dtype=tf.int32),
+      })
+
+
 define_pg19_task("pg19_bytes", seqio.ByteVocabulary())
-define_pg19_task("pg19_tokens", T5_DEFAULT_VOCABULARY)
-
-
+define_pg19_task("pg19_tokens", seqio.SentencePieceVocabulary('vocabs/pg19train_bpe_32000.model'))
+define_long_pile_task('long_pile_tokens', seqio.SentencePieceVocabulary('tokenizers/long_pile_48k.model'))

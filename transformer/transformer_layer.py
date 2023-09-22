@@ -96,8 +96,16 @@ class TransformerLayer(nn.Module):
   def _allocate_cached_kvi(self, mode: str) -> KVITuple:
     """Allocate (keys, values, importance) which can be cached between steps."""
 
-    kv_shape = [self.batch_size, self.window_length,
-                self.num_heads, self.head_size]
+    if self.tbase.attention_style == "multi_head":
+      kv_shape = [self.batch_size, self.window_length,
+                  self.num_heads, self.head_size]
+    elif self.tbase.attention_style == "multi_query":
+      kv_shape = [self.batch_size, self.window_length,
+                  self.head_size]
+    else:
+      raise ValueError("Unknown attention style: %s" %
+                       self.tbase.attention_style)
+  
     imp_shape = [self.batch_size, self.window_length]
 
     def kv_initializer(shape):
@@ -223,8 +231,13 @@ class TransformerLayer(nn.Module):
     if mode not in self.cached_kvi:
       # No cache, but we're using XL / sliding window, so return zeros.
       logging.info("tlayer: using zero as initial XL cache value.")
-      kvi_shape = (self.batch_size, self.window_length,
-                   self.num_heads, self.head_size)
+      if self.tbase.attention_style == "multi_head":
+        kvi_shape = (self.batch_size, self.window_length,
+                     self.num_heads, self.head_size)
+      elif self.tbase.attention_style == "multi_query":
+        kvi_shape = (self.batch_size, self.window_length, 
+                     self.embedding_size)
+
       return attention.initial_kvi(kvi_shape,
                                    self.compute_importance, dtype=self.dtype)
 
@@ -236,7 +249,8 @@ class TransformerLayer(nn.Module):
 
     # Broadcast start_of_sequence over non-batch dims.
     b = self.batch_size
-    start_of_sequence_kv = jnp.reshape(start_of_sequence, [b, 1, 1, 1])
+    soseq_shape = (b, 1, 1, 1) if self.tbase.attention_style == "multi_head" else (b, 1, 1)
+    start_of_sequence_kv = jnp.reshape(start_of_sequence, soseq_shape)
     prev_keys = jnp.where(start_of_sequence_kv, zkeys, pkeys.value)
     prev_vals = jnp.where(start_of_sequence_kv, zvals, pvals.value)
     if self.compute_importance:
@@ -323,7 +337,10 @@ class TransformerLayer(nn.Module):
       # jnp.repeat will "broadcast" start_of_sequence over num_heads.
       # E.g. if start_of_sequence = [True, False] and 4 heads,
       # jnp.repeat will yield [T, T, T, T, F, F, F, F]
-      memory_layer.reset(jnp.repeat(start_of_sequence, self.num_heads))
+      if self.tbase.attention_style == "multi_head":
+        memory_layer.reset(jnp.repeat(start_of_sequence, self.num_heads))
+      else:
+        memory_layer.reset(start_of_sequence)
 
     # Query external memory, with queries.
     (rkeys, rvals) = memory_layer.topk_retrieval(queries,

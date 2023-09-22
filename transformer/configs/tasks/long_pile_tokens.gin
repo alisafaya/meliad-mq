@@ -1,0 +1,16 @@
+
+NUM_EMBEDDINGS = 49152
+
+# Configure the input task.
+decoder_stack.TransformerTaskConfig:
+  dataset_name = "long_pile_tokens"
+
+training_loop.Trainer:
+  num_steps = 250_001
+  status_every_steps = 10
+  log_every_steps = 20
+  test_every_steps = 10000
+  num_test_steps = 10000
+  generate_every_steps = 0
+  print_input_every_steps = 0
+  checkpoint_every_steps = 10000
