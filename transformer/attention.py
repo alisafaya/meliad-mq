@@ -144,15 +144,15 @@ def simple_attention(keys: Array,
   logging.info("attn: keys = %r", keys)
   logging.info("attn: queries = %r", queries)
 
-  # Compute attention matrix.
   if keys.ndim == 3:
-    # multi-query attention
-    attn = jnp.einsum("...qhd,...kd->...hqk", queries, keys)  # (b, h, q, k)
-  else:
-    # multi-head attention
-    attn = jnp.einsum("...qhd,...khd->...hqk", queries, keys)  # (b, h, q, k)
+    assert values.ndim == 3
+    logging.info('attn: multi-query - reshape keys and values')
+    keys = jnp.repeat(keys[..., None, :], num_heads, axis=-2)
+    values = jnp.repeat(values[..., None, :], num_heads, axis=-2)
 
-  logging.info("attn: content attn = %r", attn)
+  # Compute attention matrix.
+  attn = jnp.einsum('...qhd,...khd->...hqk', queries, keys)  # (b, h, q, k)
+  logging.info('attn: content attn = %r', attn)
 
   # Apply relative position bias.
   if relative_position_bias is not None:
@@ -193,12 +193,7 @@ def simple_attention(keys: Array,
   logging.info("attn: final attn = %r", attn)
 
   # Compute output -- values weighted by attention matrix.
-  if values.ndim == 3:
-    # multi-query attention
-    y = jnp.einsum("...hqk,...kd->...qhd", attn, values)  # (b, q, h, d)
-  else:
-    # multi-head attention
-    y = jnp.einsum("...hqk,...khd->...qhd", attn, values)  # (b, q, h, d)
+  y = jnp.einsum('...hqk,...khd->...qhd', attn, values)  # (b, q, h, d)
 
   logging.info("attn: y = %r", y)
   return y
@@ -237,13 +232,14 @@ def external_attention(external_keys: Array,
   logging.info("ext_attn: queries = %r", queries)
 
   if external_keys.ndim == 4:
-    # multi-query attention
-    ext_attn = jnp.einsum("...qhd,...qid->...hqi", queries, external_keys)
-  elif external_keys.ndim == 5:
-    # multi-head attention
-    ext_attn = jnp.einsum("...qhd,...qhid->...hqi", queries, external_keys)
+    assert external_values.ndim == 4
+    logging.info('attn: multi-query - reshape keys and values')
+    external_keys = jnp.repeat(external_keys[..., None, :, :], num_heads, axis=-3)
+    external_values = jnp.repeat(external_values[..., None, :, :], num_heads, axis=-3)
 
+  ext_attn = jnp.einsum('...qhd,...qhid->...hqi', queries, external_keys)
   logging.info("ext_attn: external_mem_attn: %s", ext_attn)
+
   if scale_factor is not None:
     scale_factor = jnp.asarray(scale_factor, dtype=dtype)
     scale_factor = scale_factor.reshape((1, num_heads, 1, 1))
@@ -253,13 +249,7 @@ def external_attention(external_keys: Array,
   ext_attn = nn.softmax(ext_attn, axis=-1)
 
   # Compute weighted sum of values.
-  if external_values.ndim == 4:
-    # multi-query attention
-    ext_y = jnp.einsum("...hqi,...qid->...qhd", ext_attn, external_values)
-  elif external_values.ndim == 5:
-    # multi-head attention
-    ext_y = jnp.einsum("...hqi,...qhid->...qhd", ext_attn, external_values)
-
+  ext_y = jnp.einsum('...hqi,...qhid->...qhd', ext_attn, external_values)
   logging.info("ext_attn: ext_y = %r", ext_y)
   return ext_y
 
