@@ -585,10 +585,14 @@ class Trainer:
 
         # Test.
         if should_run(step, self.test_every_steps):
+          # Reset the iterator for test.
+          test_task.ds_iterator = test_task.dataset()
           if self.num_test_steps > 1:
             logging.info("Test cycle: %d iterations.", self.num_test_steps)
           for sub_step in range(0, self.num_test_steps):
             test_x = test_task.get_next_input()
+            if test_x is None:
+              break
 
             # TODO(delesley): This is an ugly hack to run generate steps.
             # Run a generate step using test data.
@@ -626,6 +630,54 @@ class Trainer:
     if self.print_variables:
       logging.info("params = %s", tstate.optimizer.target)
       logging.info("state = %s", tstate.state)
+
+  def evaluate(self):
+    """Runs the evaluation loop only."""
+
+    # The master process saves checkpoints and summaries to disk.
+    is_master_process = jax.process_index() == 0
+
+    # --- Create and initialize the model. ---
+    (tstate, start_step, imodel, prngs) = self.initialize_model()
+
+    # Log experiment hyper-parameters.
+    writers = {}
+
+    # --- Create task object ---
+    tasks = {}
+    test_task = self.create_training_task('test', imodel, prngs, writers)
+    tasks['test'] = test_task
+
+    # Register any additional actions.
+    register_interstep_callbacks()
+
+    # Main Evaluation Loop
+    # --------------------------------------------------------------------------
+    logging.info('==== Evaluation loop: starting main loop ====')
+    with metric_writers.ensure_flushes(*writers.values()):
+      # Reset the iterator for test.
+      test_task.ds_iterator = test_task.dataset()
+
+      # Run the test loop.
+      if self.num_test_steps > 1:
+        logging.info('Test cycle: %d iterations.', self.num_test_steps)
+
+      for sub_step in range(0, self.num_test_steps):
+        test_x = test_task.get_next_input()
+        if test_x is None:
+          # One epoch on eval dataset is done.
+          break
+
+        (tstate, _) = test_task.run_step(tstate,
+                                             test_x,
+                                             start_step,
+                                             sub_step=sub_step)
+        run_interstep_callbacks('test', start_step, sub_step)
+        del test_x
+
+      # Write overall test summaries.
+      logging.info('Writing overall test summaries.')
+      tasks['test'].flush(start_step)
 
   def _compile_step_function(self, mode: str) -> StepFunction:
     """Compile a step function (training or test)."""

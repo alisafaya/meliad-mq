@@ -160,9 +160,9 @@ def load_text_dataset(name: str,
       sequence_length=task_seqlen,
       split=split,
       use_cached=False,
-      shuffle=True,
+      shuffle=split == "train",
       shuffle_buffer_size=shuffle_buffer_size,
-      seed=None,
+      seed=1234567,
       shard_info=shard_info,
       num_epochs=1)
 
@@ -172,13 +172,15 @@ def load_text_dataset(name: str,
   def extract_fn(article):
     return article["targets"]
 
-  include_loss_mask = bool(get_loss_mask_tokens(split)[0])
+  # include_loss_mask = bool(get_loss_mask_tokens(split)[0])
+  include_loss_mask = True
+
   ds = split_and_batch(ds,
                        split=split,
                        extract_fn=extract_fn,
                        sequence_length=sequence_length,
                        batch_size=batch_size,
-                       auto_rewind=True,
+                       auto_rewind=split=="train",
                        vocab=vocab,
                        include_loss_mask=include_loss_mask,
                        verbose=verbose)
@@ -342,7 +344,9 @@ def split_article(tokens: np.ndarray, sequence_length: int, split: str,
   if include_loss_mask:
     loss_mask = loss_mask_from_tokens(tokens, split)
 
-  for k in range(0, len(tokens), sequence_length):
+  for k in range(0, len(tokens), sequence_length - 1):
+    # sequence_length - 1 is used as step size since we split
+    # into inputs and targets by shifting the tokens by 1
     segment = pad_chunk(tokens[k:k + sequence_length], sequence_length)
     if include_loss_mask:
       segment_loss_mask = pad_chunk(
@@ -353,12 +357,15 @@ def split_article(tokens: np.ndarray, sequence_length: int, split: str,
 
 
 def nonzero_tokens(tokens: np.ndarray,
-                   loss_mask: Optional[np.ndarray]) -> list[int]:
+                   loss_mask: Optional[np.ndarray]) -> Sequence[int]:
   """Removes tokens that are not predicted by the model."""
   # TODO(delesley): Fix the model so that it predicts the first token.
   # The language model doesn't predict the first token.
-  toks = [int(tokens[i]) for i in range(1, len(tokens))
-          if (tokens[i] != 0 and (loss_mask is None or loss_mask[i]))]
+  toks = [
+      int(tokens[i])
+      for i in range(1, len(tokens))
+      if (tokens[i] != 0 and (loss_mask is None or loss_mask[i]))
+  ]
   return toks
 
 
@@ -530,27 +537,27 @@ def _batched_interleave_generator(
       # Now that we've read an item, set /start/ to false for each reader.
       document_start[i] = False
 
-    # Decode the tokenized segement back to characters, to count the number
-    # of characters for the bits-per-character computation.
-    num_chars = [0] * batch_size
-    nz_toks = [0] * batch_size
-    for i in range(0, batch_size):
-      lmask = loss_mask[i] if include_loss_mask else None
-      toks = nonzero_tokens(targets[i], lmask)
-      if vocab is not None:
-        bchars = decode_tokens_1d(toks, vocab, max_length=len(targets[i]),
-                                  raw_string=True)
-        num_chars[i] = len(bchars)
-      else:
-        num_chars[i] = len(toks)
-      nz_toks[i] = len(toks)
+    # # Decode the tokenized segement back to characters, to count the number
+    # # of characters for the bits-per-character computation.
+    # num_chars = [0] * batch_size
+    # nz_toks = [0] * batch_size
+    # for i in range(0, batch_size):
+    #   lmask = loss_mask[i] if include_loss_mask else None
+    #   toks = nonzero_tokens(targets[i], lmask)
+    #   if vocab is not None:
+    #     bchars = decode_tokens_1d(toks, vocab, max_length=len(targets[i]),
+    #                               raw_string=True)
+    #     num_chars[i] = len(bchars)
+    #   else:
+    #     num_chars[i] = len(toks)
+    #   nz_toks[i] = len(toks)
 
     item = {
         "targets": np.stack(targets),
         "start_of_sequence": np.array(doc_start_orig),
         "epoch": np.array(item_epochs),
-        "num_chars": np.stack(num_chars),
-        "nonzero_tokens": np.stack(nz_toks),
+        # "num_chars": np.stack(num_chars),
+        # "nonzero_tokens": np.stack(nz_toks),
     }
     if include_loss_mask:
       item["loss_mask"] = np.stack(loss_mask)
@@ -628,8 +635,8 @@ def split_and_batch(ds: tf.data.Dataset,
                                dtype=tf.int32),
       "start_of_sequence": tf.TensorSpec(shape=(batch_size,), dtype=tf.bool),
       "epoch": tf.TensorSpec(shape=(batch_size,), dtype=tf.int32),
-      "num_chars": tf.TensorSpec(shape=(batch_size,), dtype=tf.int32),
-      "nonzero_tokens": tf.TensorSpec(shape=(batch_size,), dtype=tf.int32),
+      # "num_chars": tf.TensorSpec(shape=(batch_size,), dtype=tf.int32),
+      # "nonzero_tokens": tf.TensorSpec(shape=(batch_size,), dtype=tf.int32),
   }
   if include_loss_mask:
     out_sig["loss_mask"] = tf.TensorSpec(shape=(batch_size, sequence_length),

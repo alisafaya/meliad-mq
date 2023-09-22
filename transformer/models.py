@@ -154,6 +154,7 @@ class DecoderOnlyLanguageModel(nn.Module):
     epochs = inputs["epoch"]                          # [b]
     if "loss_mask" in inputs:
       loss_mask = inputs["loss_mask"]                 # [b, seq_len]
+      loss_mask = loss_mask[:, 1:]
     else:
       loss_mask = jnp.ones((1, 1), dtype=jnp.bool_)
 
@@ -167,14 +168,14 @@ class DecoderOnlyLanguageModel(nn.Module):
     input_tokens = input_tokens % task_config.vocab_size
 
     logging.info("langmodel: Compiling model for mode %s", self.mode)
-    logging.info("langmodel: input_tokens = %r", input_tokens)
     logging.info("langmodel: start_of_sequece = %r", start_of_sequence)
     logging.info("langmodel: epochs = %r", epochs)
 
     # The target outputs are the next character in each sequence.
-    # Shift tokens left and pad with a zero at the end.
-    # TODO(delesley): We don't predict the first token of each sequence.
-    target_tokens = jnp.pad(input_tokens[:, 1:], [(0, 0), (0, 1)])
+    # Shift tokens left.
+    target_tokens = input_tokens[:, 1:]
+    input_tokens = input_tokens[:, :-1]
+    logging.info("langmodel: input_tokens = %r", input_tokens)
     logging.info("langmodel: target_tokens = %r", target_tokens)
 
     # Invoke the decoder stack.
@@ -194,7 +195,6 @@ class DecoderOnlyLanguageModel(nn.Module):
 
     # Don't predict null tokens which are past the end-of-sequence.
     # Also don't predict the 0 at the end of the sequence.
-    # TODO(delesley): Predict the final end-of-sequence marker.
     loss_mask = jnp.logical_and(
         loss_mask,
         input_tokens > 0)

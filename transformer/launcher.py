@@ -30,6 +30,7 @@ from transformer import text_dataset
 flags.DEFINE_string("workdir", "", "Directory to save model checkpoints.")
 flags.DEFINE_string("load_dir", "", "Directory to load pre-trained model.")
 flags.DEFINE_integer("num_steps", 110, "Number of steps.")
+flags.DEFINE_bool('evaluation', False, 'Run evaluation only.')
 
 flags.DEFINE_list(
     "gin_search_paths",
@@ -116,4 +117,7 @@ def run_training_loop(testing: bool = False):
         load_dir=FLAGS.load_dir,
         workdir=FLAGS.workdir)
 
-  trainer.train()
+  if FLAGS.evaluation:
+    trainer.evaluate()
+  else:
+    trainer.train()

@@ -1,6 +1,6 @@
 
 decoder_stack.TransformerTaskConfig:
-  sequence_length = 512
+  sequence_length = 513
   batch_size = 8
 
 transformer_layer.TransformerLayer:

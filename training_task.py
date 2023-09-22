@@ -115,9 +115,12 @@ class TrainingTask:
       x = next(self.ds_iterator)
     except StopIteration:
       logging.info("End of epoch %d for mode %s.", self.epoch, self.mode)
-      self.ds_iterator = self.dataset()
-      x = next(self.ds_iterator)
       self.epoch += 1
+      if self.mode == 'train':
+        self.ds_iterator = self.dataset()
+        x = next(self.ds_iterator)
+      else:
+        return None
     return x
 
   def run_step(self, tstate: TrainState, x: Any,
